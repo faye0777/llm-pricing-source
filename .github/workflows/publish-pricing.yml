@@ -1,0 +1,102 @@
+name: Publish Pricing JSON
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 02:17 UTC = 10:17 Asia/Shanghai
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Generate Google Agent Platform pricing
+        run: |
+          mkdir -p public/pricing
+          python collectors/google_agent_platform.py \
+            --out public/pricing/google-agent-platform.json
+
+      - name: Generate source index
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import json
+          from pathlib import Path
+
+          root = Path("public/pricing")
+          index = {
+              "schema": "routia.pricing_sources_index.v1",
+              "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+              "sources": [
+                  {
+                      "id": "google-agent-platform",
+                      "name": "Google Agent Platform",
+                      "provider": "google",
+                      "url": "./google-agent-platform.json",
+                      "recommended_mode": "replace_platform",
+                  }
+              ],
+          }
+          (root / "index.json").write_text(
+              json.dumps(index, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Add landing page
+        run: |
+          cat > public/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>LLM Pricing Source</title>
+          <style>
+            body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.6; }
+            code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; }
+          </style>
+          <h1>LLM Pricing Source</h1>
+          <p>Generated pricing feeds for Routia/Sub2API.</p>
+          <ul>
+            <li><a href="./pricing/index.json"><code>/pricing/index.json</code></a></li>
+            <li><a href="./pricing/google-agent-platform.json"><code>/pricing/google-agent-platform.json</code></a></li>
+          </ul>
+          HTML
+          touch public/.nojekyll
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
