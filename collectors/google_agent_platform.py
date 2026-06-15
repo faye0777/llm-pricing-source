@@ -333,7 +333,7 @@ def dedupe_entries(entries: list[dict[str, Any]], key_fields: tuple[str, ...] = 
 def to_litellm_pricing(claude: list[dict[str, Any]], gemini: list[dict[str, Any]], region: str = "global") -> dict[str, Any]:
     result: dict[str, Any] = {}
     for entry in claude:
-        if entry.get("region") not in {region, "all"}:
+        if not region_matches(entry.get("region"), region):
             continue
         low = entry["tiers"][0]
         result[entry["model_id"]] = {
@@ -369,6 +369,12 @@ def ratio(num: float | None, den: float | None) -> float | None:
     return round(num / den, 8)
 
 
+def region_matches(entry_region: Any, selected_region: str) -> bool:
+    entry = str(entry_region or "").strip().lower()
+    selected = str(selected_region or "global").strip().lower()
+    return entry in {selected, "all"}
+
+
 def clean_nulls(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: clean_nulls(v) for k, v in value.items() if v is not None}
@@ -380,7 +386,7 @@ def clean_nulls(value: Any) -> Any:
 def to_channel_pricing(claude: list[dict[str, Any]], gemini: list[dict[str, Any]], region: str = "global") -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for entry in claude:
-        if entry.get("region") not in {region, "all"}:
+        if not region_matches(entry.get("region"), region):
             continue
         intervals = []
         for idx, tier in enumerate(entry["tiers"]):
@@ -463,6 +469,7 @@ def build_export(source_url: str, html: str, include_raw: bool, region: str) -> 
         parse_gemini_token_tables(tables) + parse_gemini_flat_token_tables(tables),
         key_fields=("model_id", "service_tier", "source_table_index"),
     )
+    applicable_channel_prices = to_channel_pricing(claude, gemini, region=region)
     exported = {
         "schema": "routia.google_agent_pricing.v1",
         "source_url": source_url,
@@ -483,9 +490,11 @@ def build_export(source_url: str, html: str, include_raw: bool, region: str) -> 
             "claude": claude,
             "gemini": gemini,
         },
+        "applicable_channel_prices": applicable_channel_prices,
         "sub2api": {
             "litellm_model_pricing": clean_nulls(to_litellm_pricing(claude, gemini, region=region)),
-            "channel_model_pricing": to_channel_pricing(claude, gemini, region=region),
+            "applicable_channel_prices": applicable_channel_prices,
+            "channel_model_pricing": applicable_channel_prices,
         },
     }
     if include_raw:
@@ -564,7 +573,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--out", default="google-agent-pricing.json", help="Output JSON path")
     parser.add_argument("--region", default="global", help="Region to select for sub2api exports, e.g. global/us-east5/europe-west1")
     parser.add_argument("--include-raw", action="store_true", help="Include raw parsed HTML tables in JSON")
-    parser.add_argument("--apply-channel-id", type=int, help="Apply generated channel_model_pricing to this sub2api channel ID")
+    parser.add_argument("--apply-channel-id", type=int, help="Apply generated applicable_channel_prices to this sub2api channel ID")
     parser.add_argument("--sub2api-base", default="http://127.0.0.1:8080")
     parser.add_argument("--admin-email")
     parser.add_argument("--admin-password")
@@ -579,7 +588,7 @@ def main(argv: list[str]) -> int:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(exported, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"WROTE {out_path} claude={exported['counts']['claude_entries']} gemini={exported['counts']['gemini_entries']} channel_pricing={len(exported['sub2api']['channel_model_pricing'])}")
+    print(f"WROTE {out_path} claude={exported['counts']['claude_entries']} gemini={exported['counts']['gemini_entries']} applicable_channel_prices={len(exported['applicable_channel_prices'])}")
 
     if args.apply_channel_id:
         if not args.admin_email or not args.admin_password:
@@ -589,7 +598,7 @@ def main(argv: list[str]) -> int:
             args.admin_email,
             args.admin_password,
             args.apply_channel_id,
-            exported["sub2api"]["channel_model_pricing"],
+            exported["applicable_channel_prices"],
             args.dry_run,
         )
     return 0

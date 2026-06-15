@@ -32,6 +32,15 @@ Then run the `Publish Pricing JSON` workflow manually once from the Actions tab.
 
 ## Sub2API Usage
 
+Each source keeps multiple layers:
+
+- `normalized`: complete normalized pricing observations from the official source page. This is the audit/reference layer and may include models or service tiers that are not suitable for automatic billing.
+- `applicable_channel_prices`: Routia billing-standard prices that can be directly imported into Sub2API channel pricing.
+- `sub2api.applicable_channel_prices`: compatibility mirror for Sub2API importers.
+- `sub2api.channel_model_pricing`: legacy compatibility mirror for older Sub2API importers.
+
+Use `applicable_channel_prices` as the authoritative generated layer for Routia channel billing. The collector keeps tiered prices when the official source has different token ranges; it does not use the pricing page as proof that a model is enabled for a specific Google Cloud project.
+
 Preview:
 
 ```json
